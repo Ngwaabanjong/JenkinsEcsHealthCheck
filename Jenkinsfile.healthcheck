@@ -1,0 +1,70 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION = 'us-east-1'  // Change if necessary
+        CLUSTER_NAME = 'x-test-ecs-cluster'  // Change to your ECS cluster name
+        SERVICE_NAME = 'x-test-service'  // Change to your ECS service name
+    }
+
+    stages {
+        stage('Checkout from Bitbucket') {
+            steps {
+                script {
+                    echo "Checking out code from Bitbucket..."
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: '*/main']], // Change to your branch
+                        userRemoteConfigs: [[
+                            credentialsId: 'bitbucket-credentials-id', // Replace with Jenkins credentials ID
+                            url: 'git@bitbucket.org:banjongs/x-poc.git' // Update with your Bitbucket repo
+                        ]]
+                    ])
+                }
+            }
+        }
+
+        stage('Deploy to ECS') {
+            steps {
+                script {
+                    echo "Deploying new task to ECS..."
+                    sh '''
+                        aws ecs update-service --cluster $CLUSTER_NAME --service $SERVICE_NAME --force-new-deployment
+                    '''
+                }
+            }
+        }
+
+        stage('chmod script') {
+            steps {
+                script {
+                    sh '''
+                    chmod +x scripts/check-ecs-task.sh
+                    '''
+                }
+            }
+        }
+
+        stage('Monitor ECS Tasks') {
+            steps {
+                script {
+                    echo "Waiting for ECS task to be healthy..."
+                    def status = sh(script: './scripts/check-ecs-task.sh', returnStatus: true)
+
+                    if (status != 0) {
+                        error("ECS task failed to become healthy. Stopping pipeline.")
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ Deployment succeeded!"
+        }
+        failure {
+            echo "❌ Deployment failed!"
+        }
+    }
+}
